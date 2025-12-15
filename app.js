@@ -423,6 +423,13 @@ function handleAssignmentSubmit(e) {
         assignments[cellKey] = [];
     }
     
+    // Check if project is already assigned to this day
+    const alreadyAssigned = assignments[cellKey].some(a => a.projectId === projectId);
+    if (alreadyAssigned) {
+        alert('This project is already assigned to this day. Please remove it first or choose a different project.');
+        return;
+    }
+    
     // Add new assignment to the array
     assignments[cellKey].push({
         projectId,
