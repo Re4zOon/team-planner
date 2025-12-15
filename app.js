@@ -66,6 +66,15 @@ function getTotalAssignedHours(cellAssignments) {
     return cellAssignments.reduce((sum, assignment) => sum + assignment.hours, 0);
 }
 
+// Helper function to get week start and day index for a given date
+function getWeekStartAndDayIndex(date) {
+    const weekStart = new Date(date);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
+    weekStart.setHours(0, 0, 0, 0);
+    const dayIndex = date.getDay() - 1; // Monday = 0, Friday = 4
+    return { weekStart, dayIndex };
+}
+
 // Initialize the app
 function init() {
     loadData();
@@ -426,28 +435,36 @@ function updateMultiDayPreview() {
     const dailyProjectHours = calculateDailyProjectHours(member);
     const hoursPerDay = Math.round((dailyProjectHours * percentage / 100) * 10) / 10;
     
-    // Calculate which days will be assigned
-    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+    // Calculate which days will be assigned (matching actual assignment logic)
+    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
     const assignedDays = [];
-    let currentDayIndex = startDayIndex;
-    let daysAssigned = 0;
-    let weeksNeeded = 0;
+    let currentDate = new Date(currentWeekStart);
+    currentDate.setDate(currentDate.getDate() + startDayIndex);
     
-    while (daysAssigned < numDays) {
-        if (currentDayIndex >= 5) {
-            currentDayIndex = 0;
-            weeksNeeded++;
+    let daysAssigned = 0;
+    let iterations = 0;
+    const maxIterations = numDays * 3; // Safety limit
+    
+    while (daysAssigned < numDays && iterations < maxIterations) {
+        const dayOfWeek = currentDate.getDay();
+        
+        // Only assign to weekdays (Monday = 1, Friday = 5)
+        if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+            const weeksDiff = Math.floor((currentDate - currentWeekStart) / (7 * 24 * 60 * 60 * 1000));
+            assignedDays.push({
+                day: days[dayOfWeek - 1],
+                week: weeksDiff
+            });
+            daysAssigned++;
         }
-        assignedDays.push({
-            day: days[currentDayIndex],
-            week: weeksNeeded
-        });
-        currentDayIndex++;
-        daysAssigned++;
+        
+        // Move to next day
+        currentDate.setDate(currentDate.getDate() + 1);
+        iterations++;
     }
     
     let previewHtml = `<strong>${hoursPerDay}h per day</strong> (${percentage}% of ${dailyProjectHours}h)<br>`;
-    previewHtml += `Total: <strong>${Math.round(hoursPerDay * numDays * 10) / 10}h</strong> across ${numDays} days<br>`;
+    previewHtml += `Total: <strong>${Math.round(hoursPerDay * numDays * 10) / 10}h</strong> across ${numDays} weekdays<br>`;
     
     if (assignedDays.length <= 10) {
         previewHtml += '<div style="margin-top: 5px; font-size: 0.85rem; color: #666;">';
@@ -624,7 +641,10 @@ function addMultiDayAssignment(memberId, startDayIndex, projectId, percentage, n
     currentDate.setDate(currentDate.getDate() + startDayIndex);
     
     let daysAssigned = 0;
-    while (daysAssigned < numDays) {
+    let iterations = 0;
+    const maxIterations = numDays * 3; // Safety limit to prevent infinite loops
+    
+    while (daysAssigned < numDays && iterations < maxIterations) {
         const dayOfWeek = currentDate.getDay();
         
         // Only assign to weekdays (Monday = 1, Friday = 5)
@@ -635,6 +655,12 @@ function addMultiDayAssignment(memberId, startDayIndex, projectId, percentage, n
         
         // Move to next day
         currentDate.setDate(currentDate.getDate() + 1);
+        iterations++;
+    }
+    
+    if (iterations >= maxIterations) {
+        alert('Unable to complete assignment: Maximum iteration limit reached. Please try with fewer days.');
+        return;
     }
     
     // Check for conflicts and over-allocation
@@ -642,11 +668,8 @@ function addMultiDayAssignment(memberId, startDayIndex, projectId, percentage, n
     const overAllocations = [];
     
     assignmentDates.forEach(date => {
-        const weekStart = new Date(date);
-        weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
-        weekStart.setHours(0, 0, 0, 0);
+        const { weekStart, dayIndex } = getWeekStartAndDayIndex(date);
         const weekKey = getWeekKey(weekStart);
-        const dayIndex = date.getDay() - 1; // Monday = 0, Friday = 4
         const cellKey = `${memberId}-${weekKey}-${dayIndex}`;
         
         // Check for existing assignment of this project
@@ -696,11 +719,8 @@ function addMultiDayAssignment(memberId, startDayIndex, projectId, percentage, n
     // Create assignments
     let assignmentsCreated = 0;
     assignmentDates.forEach(date => {
-        const weekStart = new Date(date);
-        weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
-        weekStart.setHours(0, 0, 0, 0);
+        const { weekStart, dayIndex } = getWeekStartAndDayIndex(date);
         const weekKey = getWeekKey(weekStart);
-        const dayIndex = date.getDay() - 1; // Monday = 0, Friday = 4
         const cellKey = `${memberId}-${weekKey}-${dayIndex}`;
         
         // Initialize array if it doesn't exist
@@ -720,7 +740,7 @@ function addMultiDayAssignment(memberId, startDayIndex, projectId, percentage, n
     renderPlannerGrid();
     closeAllModals();
     
-    alert(`Successfully created ${assignmentsCreated} assignments across ${numDays} days (${hoursPerDay}h per day).`);
+    alert(`Successfully created ${assignmentsCreated} assignments across ${numDays} weekdays (${hoursPerDay}h per day).`);
 }
 
 function removeAssignment(memberId, dayIndex, assignmentIndex) {
