@@ -16,7 +16,17 @@ function loadData() {
     
     if (savedMembers) teamMembers = JSON.parse(savedMembers);
     if (savedProjects) projects = JSON.parse(savedProjects);
-    if (savedAssignments) assignments = JSON.parse(savedAssignments);
+    if (savedAssignments) {
+        assignments = JSON.parse(savedAssignments);
+        
+        // Migrate old format to new format (backward compatibility)
+        Object.keys(assignments).forEach(key => {
+            // If value is an object (old format), convert to array (new format)
+            if (assignments[key] && !Array.isArray(assignments[key])) {
+                assignments[key] = [assignments[key]];
+            }
+        });
+    }
 }
 
 // Save data to localStorage
@@ -480,12 +490,15 @@ function deleteProject(id) {
         // Clean up assignments for this project
         Object.keys(assignments).forEach(key => {
             if (Array.isArray(assignments[key])) {
-                // Filter out assignments with this project
+                // New format: filter out assignments with this project
                 assignments[key] = assignments[key].filter(a => a.projectId !== id);
                 // Clean up if array is empty
                 if (assignments[key].length === 0) {
                     delete assignments[key];
                 }
+            } else if (assignments[key] && assignments[key].projectId === id) {
+                // Old format (shouldn't happen after migration, but just in case)
+                delete assignments[key];
             }
         });
         
