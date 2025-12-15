@@ -677,7 +677,7 @@ function addMultiDayAssignment(memberId, startDayIndex, projectId, percentage, n
     }
     
     if (iterations >= maxIterations && daysAssigned < numDays) {
-        alert(`Unable to complete assignment: Could only create ${daysAssigned} of ${numDays} requested assignments.\n\nThis might be due to an unusually large number of days. Please try with fewer days or contact support.`);
+        alert(`Unable to complete assignment: Could only create ${daysAssigned} of ${numDays} requested assignments.\n\nThis might be due to an unusually large number of days. Please try with ${daysAssigned} days or fewer.`);
         return;
     }
     
