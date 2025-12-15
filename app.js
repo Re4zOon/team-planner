@@ -569,7 +569,8 @@ function moveAssignment(sourceMemberId, sourceDayIndex, assignmentIndex) {
     const targetMemberIdx = Math.floor(targetNum / 5);
     const targetDayIdx = targetNum % 5;
     
-    if (targetMemberIdx >= teamMembers.length) {
+    // Validate the selection is within bounds
+    if (targetMemberIdx >= teamMembers.length || targetMemberIdx < 0 || targetDayIdx < 0 || targetDayIdx >= 5) {
         alert('Invalid selection');
         return;
     }
