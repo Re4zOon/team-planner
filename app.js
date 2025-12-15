@@ -52,6 +52,20 @@ function getWeekKey(weekStart) {
     return weekStart.toISOString().split('T')[0];
 }
 
+// Calculate daily project hours for a team member
+function calculateDailyProjectHours(member) {
+    // 8 hours per day * availability % * effectiveness %
+    const baseHours = 8;
+    const availableHours = baseHours * (member.availability / 100) * (member.effectiveness / 100);
+    return Math.round(availableHours * 10) / 10; // Round to 1 decimal place
+}
+
+// Calculate total assigned hours for a cell
+function getTotalAssignedHours(cellAssignments) {
+    if (!cellAssignments || cellAssignments.length === 0) return 0;
+    return cellAssignments.reduce((sum, assignment) => sum + assignment.hours, 0);
+}
+
 // Initialize the app
 function init() {
     loadData();
@@ -126,14 +140,16 @@ function renderMembers() {
         return;
     }
 
-    container.innerHTML = teamMembers.map(member => `
+    container.innerHTML = teamMembers.map(member => {
+        const dailyProjectHours = calculateDailyProjectHours(member);
+        return `
         <div class="item-card">
             <div class="item-info">
                 <div class="item-name">${member.name}</div>
                 <div class="item-details">
                     Avail: ${member.availability}% | 
                     Eff: ${member.effectiveness}% | 
-                    Maint: ${member.maintenance}%
+                    Project Hours/Day: ${dailyProjectHours}h
                 </div>
             </div>
             <div class="item-actions">
@@ -141,7 +157,8 @@ function renderMembers() {
                 <button class="btn btn-danger btn-small" onclick="deleteMember('${member.id}')">Delete</button>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
 }
 
 // Render projects list
@@ -192,13 +209,14 @@ function renderPlannerGrid() {
     
     // Member rows
     teamMembers.forEach(member => {
+        const dailyProjectHours = calculateDailyProjectHours(member);
         html += '<tr>';
         html += `<td class="member-header">
             <div class="member-header-cell">
                 <span class="member-name">${member.name}</span>
                 <span class="member-stats">
                     Avail: ${member.availability}% | Eff: ${member.effectiveness}%
-                    ${member.maintenance > 0 ? `<br>Maint: ${member.maintenance}%` : ''}
+                    <br>Project Hours/Day: ${dailyProjectHours}h
                 </span>
             </div>
         </td>`;
@@ -207,8 +225,10 @@ function renderPlannerGrid() {
         for (let dayIndex = 0; dayIndex < 5; dayIndex++) {
             const cellKey = `${member.id}-${weekKey}-${dayIndex}`;
             const cellAssignments = assignments[cellKey] || [];
+            const totalAssigned = getTotalAssignedHours(cellAssignments);
+            const isOverAllocated = totalAssigned > dailyProjectHours;
             
-            html += `<td class="calendar-cell" onclick="openAssignmentModal('${member.id}', ${dayIndex})">`;
+            html += `<td class="calendar-cell ${isOverAllocated ? 'over-allocated' : ''}" onclick="openAssignmentModal('${member.id}', ${dayIndex})">`;
             
             if (cellAssignments.length > 0) {
                 cellAssignments.forEach(assignment => {
@@ -222,6 +242,14 @@ function renderPlannerGrid() {
                         `;
                     }
                 });
+                
+                // Show capacity bar
+                html += `
+                    <div class="capacity-bar">
+                        <div class="capacity-used" style="width: ${Math.min(100, (totalAssigned / dailyProjectHours) * 100)}%"></div>
+                    </div>
+                    <div class="capacity-text ${isOverAllocated ? 'over-limit' : ''}">${totalAssigned}h / ${dailyProjectHours}h</div>
+                `;
             }
             
             html += '</td>';
@@ -249,7 +277,6 @@ function openMemberModal(memberId = null) {
             document.getElementById('memberName').value = member.name;
             document.getElementById('memberAvailability').value = member.availability;
             document.getElementById('memberEffectiveness').value = member.effectiveness;
-            document.getElementById('memberMaintenance').value = member.maintenance;
             form.dataset.editId = memberId;
         }
     } else {
@@ -311,7 +338,10 @@ function openAssignmentModal(memberId, dayIndex) {
                             <strong>${project.name}</strong>
                             <span style="color: #666; margin-left: 10px;">${assignment.hours}h</span>
                         </div>
-                        <button type="button" class="btn btn-danger btn-small" onclick="removeAssignment('${memberId}', ${dayIndex}, ${index})">Remove</button>
+                        <div style="display: flex; gap: 5px;">
+                            <button type="button" class="btn btn-secondary btn-small" onclick="moveAssignment('${memberId}', ${dayIndex}, ${index})">Move</button>
+                            <button type="button" class="btn btn-danger btn-small" onclick="removeAssignment('${memberId}', ${dayIndex}, ${index})">Remove</button>
+                        </div>
                     </div>
                 `;
             }
@@ -342,7 +372,6 @@ function handleMemberSubmit(e) {
     const name = document.getElementById('memberName').value;
     const availability = parseInt(document.getElementById('memberAvailability').value);
     const effectiveness = parseInt(document.getElementById('memberEffectiveness').value);
-    const maintenance = parseInt(document.getElementById('memberMaintenance').value);
     
     const editId = e.target.dataset.editId;
     
@@ -352,15 +381,13 @@ function handleMemberSubmit(e) {
             member.name = name;
             member.availability = availability;
             member.effectiveness = effectiveness;
-            member.maintenance = maintenance;
         }
     } else {
         teamMembers.push({
             id: generateId(),
             name,
             availability,
-            effectiveness,
-            maintenance
+            effectiveness
         });
     }
     
@@ -430,6 +457,23 @@ function handleAssignmentSubmit(e) {
         return;
     }
     
+    // Check if adding this assignment would exceed available hours
+    const member = teamMembers.find(m => m.id === memberId);
+    const dailyProjectHours = calculateDailyProjectHours(member);
+    const currentTotal = getTotalAssignedHours(assignments[cellKey]);
+    const newTotal = currentTotal + hours;
+    
+    if (newTotal > dailyProjectHours) {
+        const canProceed = confirm(
+            `Warning: Adding ${hours}h will result in ${newTotal}h assigned, ` +
+            `which exceeds the available ${dailyProjectHours}h for this day.\n\n` +
+            `Do you want to proceed anyway?`
+        );
+        if (!canProceed) {
+            return;
+        }
+    }
+    
     // Add new assignment to the array
     assignments[cellKey].push({
         projectId,
@@ -462,6 +506,114 @@ function removeAssignment(memberId, dayIndex, assignmentIndex) {
         // Refresh the modal to show the updated list
         openAssignmentModal(memberId, dayIndex);
     }
+}
+
+// Move assignment to a different member/day
+function moveAssignment(sourceMemberId, sourceDayIndex, assignmentIndex) {
+    const weekKey = getWeekKey(currentWeekStart);
+    const sourceCellKey = `${sourceMemberId}-${weekKey}-${sourceDayIndex}`;
+    
+    if (!assignments[sourceCellKey] || !assignments[sourceCellKey][assignmentIndex]) {
+        alert('Assignment not found');
+        return;
+    }
+    
+    const assignment = assignments[sourceCellKey][assignmentIndex];
+    const project = projects.find(p => p.id === assignment.projectId);
+    
+    if (!project) {
+        alert('Project not found');
+        return;
+    }
+    
+    // Create a modal for selecting target member and day
+    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+    let options = '<option value="">Select target...</option>';
+    
+    teamMembers.forEach(member => {
+        for (let dayIdx = 0; dayIdx < 5; dayIdx++) {
+            const targetCellKey = `${member.id}-${weekKey}-${dayIdx}`;
+            // Don't show the source as an option
+            if (targetCellKey !== sourceCellKey) {
+                options += `<option value="${member.id},${dayIdx}">${member.name} - ${days[dayIdx]}</option>`;
+            }
+        }
+    });
+    
+    const targetSelection = prompt(
+        `Move "${project.name}" (${assignment.hours}h) to:\n\n` +
+        `Enter the number for your choice:\n` +
+        teamMembers.map((member, mIdx) => {
+            return days.map((day, dIdx) => {
+                const cellKey = `${member.id}-${weekKey}-${dIdx}`;
+                if (cellKey !== sourceCellKey) {
+                    const num = (mIdx * 5) + dIdx + 1;
+                    return `${num}. ${member.name} - ${day}`;
+                }
+                return null;
+            }).filter(x => x).join('\n');
+        }).join('\n') + '\n\n(Or Cancel to abort)'
+    );
+    
+    if (!targetSelection) {
+        return; // User cancelled
+    }
+    
+    const targetNum = parseInt(targetSelection) - 1;
+    if (isNaN(targetNum) || targetNum < 0) {
+        alert('Invalid selection');
+        return;
+    }
+    
+    // Calculate target member and day from the number
+    const targetMemberIdx = Math.floor(targetNum / 5);
+    const targetDayIdx = targetNum % 5;
+    
+    // Validate the selection is within bounds
+    if (targetMemberIdx >= teamMembers.length || targetMemberIdx < 0 || targetDayIdx < 0 || targetDayIdx >= 5) {
+        alert('Invalid selection');
+        return;
+    }
+    
+    const targetMember = teamMembers[targetMemberIdx];
+    const targetCellKey = `${targetMember.id}-${weekKey}-${targetDayIdx}`;
+    
+    // Check if target would be over-allocated
+    const dailyProjectHours = calculateDailyProjectHours(targetMember);
+    const currentTotal = getTotalAssignedHours(assignments[targetCellKey] || []);
+    const newTotal = currentTotal + assignment.hours;
+    
+    if (newTotal > dailyProjectHours) {
+        const canProceed = confirm(
+            `Warning: Moving this assignment will result in ${newTotal}h assigned to ` +
+            `${targetMember.name} on ${days[targetDayIdx]}, which exceeds the available ` +
+            `${dailyProjectHours}h.\n\nDo you want to proceed anyway?`
+        );
+        if (!canProceed) {
+            return;
+        }
+    }
+    
+    // Remove from source
+    assignments[sourceCellKey].splice(assignmentIndex, 1);
+    if (assignments[sourceCellKey].length === 0) {
+        delete assignments[sourceCellKey];
+    }
+    
+    // Add to target
+    if (!assignments[targetCellKey]) {
+        assignments[targetCellKey] = [];
+    }
+    assignments[targetCellKey].push({
+        projectId: assignment.projectId,
+        hours: assignment.hours
+    });
+    
+    saveData();
+    renderPlannerGrid();
+    closeAllModals();
+    
+    alert(`Moved "${project.name}" to ${targetMember.name} - ${days[targetDayIdx]}`);
 }
 
 // CRUD operations

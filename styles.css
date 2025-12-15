@@ -259,6 +259,45 @@ header h1 {
     opacity: 0.9;
 }
 
+.capacity-bar {
+    width: 100%;
+    height: 4px;
+    background-color: #e0e0e0;
+    border-radius: 2px;
+    margin-top: 5px;
+    overflow: hidden;
+}
+
+.capacity-used {
+    height: 100%;
+    background-color: #4caf50;
+    transition: width 0.3s ease;
+}
+
+.over-allocated .capacity-used {
+    background-color: #f44336;
+}
+
+.capacity-text {
+    font-size: 0.7rem;
+    color: #666;
+    margin-top: 3px;
+    text-align: center;
+}
+
+.capacity-text.over-limit {
+    color: #f44336;
+    font-weight: 600;
+}
+
+.calendar-cell.over-allocated {
+    background-color: #ffebee;
+}
+
+.calendar-cell.over-allocated:hover {
+    background-color: #ffcdd2;
+}
+
 .modal {
     display: none;
     position: fixed;
