@@ -90,14 +90,13 @@ function getProjectRemainingHours(projectId) {
     return Math.max(0, project.hours - scheduled);
 }
 
-// Calculate ETA for a project based on future assignments
+// Calculate ETA for a project based on assignments
 function getProjectETA(projectId) {
     const remaining = getProjectRemainingHours(projectId);
     if (remaining <= 0) return 'Completed';
     
     // Find the last assignment date for this project
     let lastAssignmentDate = null;
-    const currentWeekKey = getWeekKey(currentWeekStart);
     
     Object.keys(assignments).forEach(cellKey => {
         const cellAssignments = assignments[cellKey];
@@ -124,7 +123,7 @@ function getProjectETA(projectId) {
     
     if (!lastAssignmentDate) return 'Not scheduled';
     
-    // If there are remaining hours, ETA is unknown unless we have future assignments
+    // Return the date of the last assignment as the ETA
     return formatDate(lastAssignmentDate);
 }
 
