@@ -1,7 +1,7 @@
 // Data storage
 let teamMembers = [];
 let projects = [];
-let assignments = {}; // key: "memberId-weekKey-dayIndex", value: {projectId, hours}
+let assignments = {}; // key: "memberId-weekKey-dayIndex", value: [{projectId, hours}, ...]
 let currentWeekStart = new Date();
 
 // Initialize to Monday of current week
@@ -85,7 +85,6 @@ function setupEventListeners() {
 
     // Assignment form
     document.getElementById('assignmentForm').addEventListener('submit', handleAssignmentSubmit);
-    document.getElementById('clearAssignment').addEventListener('click', handleClearAssignment);
 
     // Modal close buttons
     document.querySelectorAll('.close, .cancel-btn').forEach(btn => {
@@ -197,20 +196,22 @@ function renderPlannerGrid() {
         // Day cells
         for (let dayIndex = 0; dayIndex < 5; dayIndex++) {
             const cellKey = `${member.id}-${weekKey}-${dayIndex}`;
-            const assignment = assignments[cellKey];
+            const cellAssignments = assignments[cellKey] || [];
             
             html += `<td class="calendar-cell" onclick="openAssignmentModal('${member.id}', ${dayIndex})">`;
             
-            if (assignment) {
-                const project = projects.find(p => p.id === assignment.projectId);
-                if (project) {
-                    html += `
-                        <div class="assignment" style="background-color: ${project.color}">
-                            <div class="assignment-name">${project.name}</div>
-                            <div class="assignment-hours">${assignment.hours}h</div>
-                        </div>
-                    `;
-                }
+            if (cellAssignments.length > 0) {
+                cellAssignments.forEach(assignment => {
+                    const project = projects.find(p => p.id === assignment.projectId);
+                    if (project) {
+                        html += `
+                            <div class="assignment" style="background-color: ${project.color}">
+                                <div class="assignment-name">${project.name}</div>
+                                <div class="assignment-hours">${assignment.hours}h</div>
+                            </div>
+                        `;
+                    }
+                });
             }
             
             html += '</td>';
@@ -277,6 +278,7 @@ function openAssignmentModal(memberId, dayIndex) {
     const modal = document.getElementById('assignmentModal');
     const form = document.getElementById('assignmentForm');
     const select = document.getElementById('assignProject');
+    const currentAssignmentsDiv = document.getElementById('currentAssignments');
     
     // Populate project dropdown
     select.innerHTML = '<option value="">Select a project...</option>' +
@@ -284,16 +286,35 @@ function openAssignmentModal(memberId, dayIndex) {
     
     const weekKey = getWeekKey(currentWeekStart);
     const cellKey = `${memberId}-${weekKey}-${dayIndex}`;
-    const assignment = assignments[cellKey];
+    const cellAssignments = assignments[cellKey] || [];
+    
+    // Display current assignments
+    if (cellAssignments.length > 0) {
+        let assignmentsHtml = '<h3 style="margin-bottom: 10px; font-size: 1.1rem; color: #667eea;">Current Assignments</h3>';
+        assignmentsHtml += '<div style="background: #f8f9fa; padding: 10px; border-radius: 6px; margin-bottom: 15px;">';
+        cellAssignments.forEach((assignment, index) => {
+            const project = projects.find(p => p.id === assignment.projectId);
+            if (project) {
+                assignmentsHtml += `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; margin-bottom: 8px; background: white; border-radius: 4px; border-left: 4px solid ${project.color}">
+                        <div>
+                            <strong>${project.name}</strong>
+                            <span style="color: #666; margin-left: 10px;">${assignment.hours}h</span>
+                        </div>
+                        <button type="button" class="btn btn-danger btn-small" onclick="removeAssignment('${memberId}', ${dayIndex}, ${index})">Remove</button>
+                    </div>
+                `;
+            }
+        });
+        assignmentsHtml += '</div>';
+        currentAssignmentsDiv.innerHTML = assignmentsHtml;
+    } else {
+        currentAssignmentsDiv.innerHTML = '<p style="color: #999; font-style: italic; margin-bottom: 15px;">No assignments for this day yet.</p>';
+    }
     
     form.reset();
     form.dataset.memberId = memberId;
     form.dataset.dayIndex = dayIndex;
-    
-    if (assignment) {
-        select.value = assignment.projectId;
-        document.getElementById('assignHours').value = assignment.hours;
-    }
     
     modal.classList.add('active');
 }
@@ -387,30 +408,43 @@ function handleAssignmentSubmit(e) {
     const weekKey = getWeekKey(currentWeekStart);
     const cellKey = `${memberId}-${weekKey}-${dayIndex}`;
     
-    assignments[cellKey] = {
+    // Initialize array if it doesn't exist
+    if (!assignments[cellKey]) {
+        assignments[cellKey] = [];
+    }
+    
+    // Add new assignment to the array
+    assignments[cellKey].push({
         projectId,
         hours
-    };
+    });
     
     saveData();
     renderPlannerGrid();
-    closeAllModals();
+    
+    // Refresh the modal to show the updated list
+    openAssignmentModal(memberId, dayIndex);
 }
 
-function handleClearAssignment(e) {
-    e.preventDefault();
-    
-    const form = document.getElementById('assignmentForm');
-    const memberId = form.dataset.memberId;
-    const dayIndex = parseInt(form.dataset.dayIndex);
+function removeAssignment(memberId, dayIndex, assignmentIndex) {
     const weekKey = getWeekKey(currentWeekStart);
     const cellKey = `${memberId}-${weekKey}-${dayIndex}`;
     
-    delete assignments[cellKey];
-    
-    saveData();
-    renderPlannerGrid();
-    closeAllModals();
+    if (assignments[cellKey]) {
+        // Remove the assignment at the specified index
+        assignments[cellKey].splice(assignmentIndex, 1);
+        
+        // Clean up if array is empty
+        if (assignments[cellKey].length === 0) {
+            delete assignments[cellKey];
+        }
+        
+        saveData();
+        renderPlannerGrid();
+        
+        // Refresh the modal to show the updated list
+        openAssignmentModal(memberId, dayIndex);
+    }
 }
 
 // CRUD operations
@@ -445,8 +479,13 @@ function deleteProject(id) {
         
         // Clean up assignments for this project
         Object.keys(assignments).forEach(key => {
-            if (assignments[key].projectId === id) {
-                delete assignments[key];
+            if (Array.isArray(assignments[key])) {
+                // Filter out assignments with this project
+                assignments[key] = assignments[key].filter(a => a.projectId !== id);
+                // Clean up if array is empty
+                if (assignments[key].length === 0) {
+                    delete assignments[key];
+                }
             }
         });
         

@@ -102,8 +102,13 @@
     <div id="assignmentModal" class="modal">
         <div class="modal-content">
             <span class="close">&times;</span>
-            <h2 id="assignmentModalTitle">Assign Project</h2>
+            <h2 id="assignmentModalTitle">Manage Assignments</h2>
+            
+            <!-- Current assignments list -->
+            <div id="currentAssignments" style="margin-bottom: 20px;"></div>
+            
             <form id="assignmentForm">
+                <h3 style="margin-bottom: 15px; font-size: 1.1rem; color: #667eea;">Add Assignment</h3>
                 <div class="form-group">
                     <label for="assignProject">Project:</label>
                     <select id="assignProject" required>
@@ -113,12 +118,11 @@
                 <div class="form-group">
                     <label for="assignHours">Hours:</label>
                     <input type="number" id="assignHours" min="0" max="40" step="0.5" value="8" required>
-                    <small>Hours allocated for this week</small>
+                    <small>Hours allocated for this day</small>
                 </div>
                 <div class="form-actions">
-                    <button type="submit" class="btn btn-primary">Assign</button>
-                    <button type="button" class="btn btn-secondary cancel-btn">Cancel</button>
-                    <button type="button" id="clearAssignment" class="btn btn-danger">Clear Assignment</button>
+                    <button type="submit" class="btn btn-primary">Add Assignment</button>
+                    <button type="button" class="btn btn-secondary cancel-btn">Close</button>
                 </div>
             </form>
         </div>
