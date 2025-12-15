@@ -66,6 +66,68 @@ function getTotalAssignedHours(cellAssignments) {
     return cellAssignments.reduce((sum, assignment) => sum + assignment.hours, 0);
 }
 
+// Calculate total scheduled hours for a project across all assignments
+function getProjectScheduledHours(projectId) {
+    let totalScheduled = 0;
+    Object.keys(assignments).forEach(cellKey => {
+        const cellAssignments = assignments[cellKey];
+        if (Array.isArray(cellAssignments)) {
+            cellAssignments.forEach(assignment => {
+                if (assignment.projectId === projectId) {
+                    totalScheduled += assignment.hours;
+                }
+            });
+        }
+    });
+    return totalScheduled;
+}
+
+// Calculate remaining hours for a project
+function getProjectRemainingHours(projectId) {
+    const project = projects.find(p => p.id === projectId);
+    if (!project) return 0;
+    const scheduled = getProjectScheduledHours(projectId);
+    return Math.max(0, project.hours - scheduled);
+}
+
+// Calculate ETA for a project based on future assignments
+function getProjectETA(projectId) {
+    const remaining = getProjectRemainingHours(projectId);
+    if (remaining <= 0) return 'Completed';
+    
+    // Find the last assignment date for this project
+    let lastAssignmentDate = null;
+    const currentWeekKey = getWeekKey(currentWeekStart);
+    
+    Object.keys(assignments).forEach(cellKey => {
+        const cellAssignments = assignments[cellKey];
+        if (Array.isArray(cellAssignments)) {
+            cellAssignments.forEach(assignment => {
+                if (assignment.projectId === projectId) {
+                    // Parse the cell key: "memberId-weekKey-dayIndex"
+                    const parts = cellKey.split('-');
+                    if (parts.length >= 3) {
+                        const dayIndex = parseInt(parts[parts.length - 1]);
+                        const weekKey = parts.slice(1, -1).join('-');
+                        const weekDate = new Date(weekKey);
+                        const assignmentDate = new Date(weekDate);
+                        assignmentDate.setDate(assignmentDate.getDate() + dayIndex);
+                        
+                        if (!lastAssignmentDate || assignmentDate > lastAssignmentDate) {
+                            lastAssignmentDate = assignmentDate;
+                        }
+                    }
+                }
+            });
+        }
+    });
+    
+    if (!lastAssignmentDate) return 'Not scheduled';
+    
+    // If there are remaining hours, ETA is unknown unless we have future assignments
+    return formatDate(lastAssignmentDate);
+}
+
 // Initialize the app
 function init() {
     loadData();
@@ -170,18 +232,34 @@ function renderProjects() {
         return;
     }
 
-    container.innerHTML = projects.map(project => `
+    container.innerHTML = projects.map(project => {
+        const totalHours = project.hours;
+        const scheduledHours = getProjectScheduledHours(project.id);
+        const remainingHours = getProjectRemainingHours(project.id);
+        const progressPercent = totalHours > 0 ? Math.min(100, (scheduledHours / totalHours) * 100) : 0;
+        const eta = getProjectETA(project.id);
+        
+        return `
         <div class="item-card project-card" style="--project-color: ${project.color}">
             <div class="item-info">
                 <div class="item-name">${project.name}</div>
-                <div class="item-details">Total Hours: ${project.hours}h</div>
+                <div class="item-details">
+                    Total: ${totalHours}h | Scheduled: ${scheduledHours}h | Remaining: ${remainingHours}h
+                    <br>
+                    <span class="project-eta">ETA: ${eta}</span>
+                </div>
+                <div class="project-progress-bar">
+                    <div class="project-progress-fill" style="width: ${progressPercent}%; background-color: ${project.color}"></div>
+                </div>
+                <div class="project-progress-text">${progressPercent.toFixed(0)}% scheduled</div>
             </div>
             <div class="item-actions">
                 <button class="btn btn-secondary btn-small" onclick="editProject('${project.id}')">Edit</button>
                 <button class="btn btn-danger btn-small" onclick="deleteProject('${project.id}')">Delete</button>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
 }
 
 // Render planner grid
@@ -481,6 +559,7 @@ function handleAssignmentSubmit(e) {
     });
     
     saveData();
+    renderProjects();
     renderPlannerGrid();
     
     // Refresh the modal to show the updated list
@@ -501,6 +580,7 @@ function removeAssignment(memberId, dayIndex, assignmentIndex) {
         }
         
         saveData();
+        renderProjects();
         renderPlannerGrid();
         
         // Refresh the modal to show the updated list
@@ -610,6 +690,7 @@ function moveAssignment(sourceMemberId, sourceDayIndex, assignmentIndex) {
     });
     
     saveData();
+    renderProjects();
     renderPlannerGrid();
     closeAllModals();
     
