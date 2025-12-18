@@ -4,6 +4,10 @@ let projects = [];
 let assignments = {}; // key: "memberId-weekKey-dayIndex", value: [{projectId, hours}, ...]
 let currentWeekStart = new Date();
 
+// Constants
+const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const SAFETY_MULTIPLIER = 3; // Multiplier for max iterations to account for weekends and edge cases
+
 // Initialize to Monday of current week
 currentWeekStart.setDate(currentWeekStart.getDate() - currentWeekStart.getDay() + 1);
 currentWeekStart.setHours(0, 0, 0, 0);
@@ -127,6 +131,30 @@ function getProjectETA(projectId) {
     return formatDate(lastAssignmentDate);
 }
 
+// Helper function to get week start and day index for a given date
+function getWeekStartAndDayIndex(date) {
+    const dayOfWeek = date.getDay();
+    
+    // Validate that date is a weekday (Monday-Friday)
+    // Sunday = 0, Monday = 1, ..., Saturday = 6
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+        console.warn('getWeekStartAndDayIndex called with weekend date:', date);
+    }
+    
+    const weekStart = new Date(date);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
+    weekStart.setHours(0, 0, 0, 0);
+    const dayIndex = date.getDay() - 1; // Monday = 0, Friday = 4, Sunday = -1
+    return { weekStart, dayIndex };
+}
+
+// Helper function to calculate maximum iterations for multi-day assignment
+function calculateMaxIterations(numDays) {
+    // Account for weekends: for every 5 weekdays, there are 2 weekend days
+    // So we multiply by SAFETY_MULTIPLIER to ensure we have enough iterations
+    return numDays * SAFETY_MULTIPLIER;
+}
+
 // Initialize the app
 function init() {
     loadData();
@@ -170,6 +198,20 @@ function setupEventListeners() {
 
     // Assignment form
     document.getElementById('assignmentForm').addEventListener('submit', handleAssignmentSubmit);
+
+    // Assignment mode toggle
+    document.addEventListener('change', (e) => {
+        if (e.target.name === 'assignmentMode') {
+            toggleAssignmentMode();
+        }
+    });
+
+    // Update preview when percentage or days change
+    document.addEventListener('input', (e) => {
+        if (e.target.id === 'assignPercentage' || e.target.id === 'assignDays') {
+            updateMultiDayPreview();
+        }
+    });
 
     // Modal close buttons
     document.querySelectorAll('.close, .cancel-btn').forEach(btn => {
@@ -305,14 +347,14 @@ function renderPlannerGrid() {
             const totalAssigned = getTotalAssignedHours(cellAssignments);
             const isOverAllocated = totalAssigned > dailyProjectHours;
             
-            html += `<td class="calendar-cell ${isOverAllocated ? 'over-allocated' : ''}" onclick="openAssignmentModal('${member.id}', ${dayIndex})">`;
+            html += `<td class="calendar-cell ${isOverAllocated ? 'over-allocated' : ''}" onclick="openAssignmentModal('${member.id}', ${dayIndex})" ondragover="handleCellDragOver(event, '${member.id}', ${dayIndex})" ondragleave="handleCellDragLeave(event)" ondrop="handleAssignmentDrop(event, '${member.id}', ${dayIndex})">`;
             
             if (cellAssignments.length > 0) {
-                cellAssignments.forEach(assignment => {
+                cellAssignments.forEach((assignment, index) => {
                     const project = projects.find(p => p.id === assignment.projectId);
                     if (project) {
                         html += `
-                            <div class="assignment" style="background-color: ${project.color}">
+                            <div class="assignment" draggable="true" ondragstart="handleAssignmentDragStart(event, '${member.id}', ${dayIndex}, ${index})" ondragend="handleAssignmentDragEnd(event)" style="background-color: ${project.color}">
                                 <div class="assignment-name">${project.name}</div>
                                 <div class="assignment-hours">${assignment.hours}h</div>
                             </div>
@@ -433,7 +475,105 @@ function openAssignmentModal(memberId, dayIndex) {
     form.dataset.memberId = memberId;
     form.dataset.dayIndex = dayIndex;
     
+    // Reset to single day mode
+    document.querySelector('input[name="assignmentMode"][value="single"]').checked = true;
+    toggleAssignmentMode();
+    
     modal.classList.add('active');
+}
+
+// Toggle between single-day and multi-day assignment modes
+function toggleAssignmentMode() {
+    const mode = document.querySelector('input[name="assignmentMode"]:checked').value;
+    const singleDayFields = document.getElementById('singleDayFields');
+    const multiDayFields = document.getElementById('multiDayFields');
+    const hoursInput = document.getElementById('assignHours');
+    const percentageInput = document.getElementById('assignPercentage');
+    const daysInput = document.getElementById('assignDays');
+    
+    if (mode === 'single') {
+        singleDayFields.style.display = 'block';
+        multiDayFields.style.display = 'none';
+        hoursInput.required = true;
+        percentageInput.required = false;
+        daysInput.required = false;
+    } else {
+        singleDayFields.style.display = 'none';
+        multiDayFields.style.display = 'block';
+        hoursInput.required = false;
+        percentageInput.required = true;
+        daysInput.required = true;
+        updateMultiDayPreview();
+    }
+}
+
+// Update multi-day assignment preview
+function updateMultiDayPreview() {
+    const form = document.getElementById('assignmentForm');
+    const memberId = form.dataset.memberId;
+    const startDayIndex = parseInt(form.dataset.dayIndex);
+    const percentage = parseFloat(document.getElementById('assignPercentage').value) || 0;
+    const numDays = parseInt(document.getElementById('assignDays').value) || 0;
+    const preview = document.getElementById('multiDayPreview');
+    const previewContent = document.getElementById('multiDayPreviewContent');
+    
+    if (!memberId || percentage <= 0 || numDays <= 0) {
+        preview.style.display = 'none';
+        return;
+    }
+    
+    const member = teamMembers.find(m => m.id === memberId);
+    if (!member) {
+        preview.style.display = 'none';
+        return;
+    }
+    
+    const dailyProjectHours = calculateDailyProjectHours(member);
+    const hoursPerDay = Math.round((dailyProjectHours * percentage / 100) * 10) / 10;
+    
+    // Calculate which days will be assigned (matching actual assignment logic)
+    const assignedDays = [];
+    let currentDate = new Date(currentWeekStart);
+    currentDate.setDate(currentDate.getDate() + startDayIndex);
+    
+    let daysAssigned = 0;
+    let iterations = 0;
+    const maxIterations = calculateMaxIterations(numDays);
+    
+    while (daysAssigned < numDays && iterations < maxIterations) {
+        const dayOfWeek = currentDate.getDay();
+        
+        // Only assign to weekdays (Monday = 1, Friday = 5)
+        if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+            const weeksDiff = Math.floor((currentDate - currentWeekStart) / (7 * 24 * 60 * 60 * 1000));
+            assignedDays.push({
+                day: DAYS_OF_WEEK[dayOfWeek - 1],
+                week: weeksDiff
+            });
+            daysAssigned++;
+        }
+        
+        // Move to next day
+        currentDate.setDate(currentDate.getDate() + 1);
+        iterations++;
+    }
+    
+    let previewHtml = `<strong>${hoursPerDay}h per day</strong> (${percentage}% of ${dailyProjectHours}h)<br>`;
+    previewHtml += `Total: <strong>${Math.round(hoursPerDay * numDays * 10) / 10}h</strong> across ${numDays} weekdays<br>`;
+    
+    if (assignedDays.length <= 10) {
+        previewHtml += '<div style="margin-top: 5px; font-size: 0.85rem; color: #666;">';
+        previewHtml += 'Days: ';
+        const daysSummary = assignedDays.map(d => {
+            if (d.week === 0) return d.day;
+            return `${d.day} (Week +${d.week})`;
+        }).join(', ');
+        previewHtml += daysSummary;
+        previewHtml += '</div>';
+    }
+    
+    previewContent.innerHTML = previewHtml;
+    preview.style.display = 'block';
 }
 
 function closeAllModals() {
@@ -510,15 +650,35 @@ function handleAssignmentSubmit(e) {
     
     const form = e.target;
     const memberId = form.dataset.memberId;
-    const dayIndex = parseInt(form.dataset.dayIndex);
+    const startDayIndex = parseInt(form.dataset.dayIndex);
     const projectId = document.getElementById('assignProject').value;
-    const hours = parseFloat(document.getElementById('assignHours').value);
+    const mode = document.querySelector('input[name="assignmentMode"]:checked').value;
     
     if (!projectId) {
         alert('Please select a project');
         return;
     }
     
+    const member = teamMembers.find(m => m.id === memberId);
+    if (!member) {
+        alert('Member not found');
+        return;
+    }
+    
+    if (mode === 'single') {
+        // Single day assignment (existing logic)
+        const hours = parseFloat(document.getElementById('assignHours').value);
+        addSingleAssignment(memberId, startDayIndex, projectId, hours);
+    } else {
+        // Multi-day assignment (new logic)
+        const percentage = parseFloat(document.getElementById('assignPercentage').value);
+        const numDays = parseInt(document.getElementById('assignDays').value);
+        addMultiDayAssignment(memberId, startDayIndex, projectId, percentage, numDays);
+    }
+}
+
+// Add a single assignment to a specific day
+function addSingleAssignment(memberId, dayIndex, projectId, hours) {
     const weekKey = getWeekKey(currentWeekStart);
     const cellKey = `${memberId}-${weekKey}-${dayIndex}`;
     
@@ -565,6 +725,122 @@ function handleAssignmentSubmit(e) {
     openAssignmentModal(memberId, dayIndex);
 }
 
+// Add multi-day assignment across multiple days
+function addMultiDayAssignment(memberId, startDayIndex, projectId, percentage, numDays) {
+    const member = teamMembers.find(m => m.id === memberId);
+    const dailyProjectHours = calculateDailyProjectHours(member);
+    const hoursPerDay = Math.round((dailyProjectHours * percentage / 100) * 10) / 10;
+    
+    // Calculate which days will be assigned
+    const assignmentDates = [];
+    let currentDate = new Date(currentWeekStart);
+    currentDate.setDate(currentDate.getDate() + startDayIndex);
+    
+    let daysAssigned = 0;
+    let iterations = 0;
+    const maxIterations = calculateMaxIterations(numDays);
+    
+    while (daysAssigned < numDays && iterations < maxIterations) {
+        const dayOfWeek = currentDate.getDay();
+        
+        // Only assign to weekdays (Monday = 1, Friday = 5)
+        if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+            assignmentDates.push(new Date(currentDate));
+            daysAssigned++;
+        }
+        
+        // Move to next day
+        currentDate.setDate(currentDate.getDate() + 1);
+        iterations++;
+    }
+    
+    if (iterations >= maxIterations && daysAssigned < numDays) {
+        alert(`Unable to complete assignment: Could only create ${daysAssigned} of ${numDays} requested assignments.\n\nThis might be due to an unusually large number of days. Please try with ${daysAssigned} days or fewer.`);
+        return;
+    }
+    
+    // Check for conflicts and over-allocation
+    const conflicts = [];
+    const overAllocations = [];
+    
+    assignmentDates.forEach(date => {
+        const { weekStart, dayIndex } = getWeekStartAndDayIndex(date);
+        const weekKey = getWeekKey(weekStart);
+        const cellKey = `${memberId}-${weekKey}-${dayIndex}`;
+        
+        // Check for existing assignment of this project
+        if (assignments[cellKey]) {
+            const alreadyAssigned = assignments[cellKey].some(a => a.projectId === projectId);
+            if (alreadyAssigned) {
+                conflicts.push(formatDate(date));
+            }
+        }
+        
+        // Check for over-allocation
+        const currentTotal = getTotalAssignedHours(assignments[cellKey] || []);
+        const newTotal = currentTotal + hoursPerDay;
+        if (newTotal > dailyProjectHours) {
+            overAllocations.push({
+                date: formatDate(date),
+                current: currentTotal,
+                new: newTotal,
+                available: dailyProjectHours
+            });
+        }
+    });
+    
+    // Show warnings if there are conflicts or over-allocations
+    if (conflicts.length > 0) {
+        alert(`This project is already assigned on the following days:\n${conflicts.join(', ')}\n\nPlease remove those assignments first.`);
+        return;
+    }
+    
+    if (overAllocations.length > 0) {
+        const overMsg = overAllocations.slice(0, 5).map(o => 
+            `${o.date}: ${o.new}h (exceeds ${o.available}h available)`
+        ).join('\n');
+        
+        let message = `Warning: This assignment will exceed available hours on ${overAllocations.length} day(s):\n\n${overMsg}`;
+        if (overAllocations.length > 5) {
+            message += `\n... and ${overAllocations.length - 5} more days`;
+        }
+        message += '\n\nDo you want to proceed anyway?';
+        
+        const canProceed = confirm(message);
+        if (!canProceed) {
+            return;
+        }
+    }
+    
+    // Create assignments
+    let assignmentsCreated = 0;
+    assignmentDates.forEach(date => {
+        const { weekStart, dayIndex } = getWeekStartAndDayIndex(date);
+        const weekKey = getWeekKey(weekStart);
+        const cellKey = `${memberId}-${weekKey}-${dayIndex}`;
+        
+        // Initialize array if it doesn't exist
+        if (!assignments[cellKey]) {
+            assignments[cellKey] = [];
+        }
+        
+        // Add assignment
+        assignments[cellKey].push({
+            projectId,
+            hours: hoursPerDay
+        });
+        assignmentsCreated++;
+    });
+    
+    saveData();
+    renderPlannerGrid();
+    closeAllModals();
+    
+    // Show accurate count of assignments created
+    const totalHours = Math.round(assignmentsCreated * hoursPerDay * 10) / 10;
+    alert(`Successfully created ${assignmentsCreated} assignment(s) (${hoursPerDay}h per day, ${totalHours}h total).`);
+}
+
 function removeAssignment(memberId, dayIndex, assignmentIndex) {
     const weekKey = getWeekKey(currentWeekStart);
     const cellKey = `${memberId}-${weekKey}-${dayIndex}`;
@@ -585,6 +861,105 @@ function removeAssignment(memberId, dayIndex, assignmentIndex) {
         // Refresh the modal to show the updated list
         openAssignmentModal(memberId, dayIndex);
     }
+}
+
+// Drag and drop handlers
+function handleAssignmentDragStart(event, memberId, dayIndex, assignmentIndex) {
+    const dragData = {
+        memberId,
+        dayIndex,
+        assignmentIndex,
+        weekKey: getWeekKey(currentWeekStart)
+    };
+    
+    event.dataTransfer.setData('text/plain', JSON.stringify(dragData));
+    event.dataTransfer.effectAllowed = 'move';
+    event.stopPropagation();
+}
+
+function handleAssignmentDragEnd() {
+    document.querySelectorAll('.calendar-cell.drag-over').forEach(cell => {
+        cell.classList.remove('drag-over');
+    });
+}
+
+function handleCellDragOver(event, memberId, dayIndex) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    event.currentTarget.classList.add('drag-over');
+}
+
+function handleCellDragLeave(event) {
+    event.currentTarget.classList.remove('drag-over');
+}
+
+function handleAssignmentDrop(event, targetMemberId, targetDayIndex) {
+    event.preventDefault();
+    event.currentTarget.classList.remove('drag-over');
+    
+    const dataText = event.dataTransfer.getData('text/plain');
+    if (!dataText) return;
+    
+    let dragData;
+    try {
+        dragData = JSON.parse(dataText);
+    } catch (e) {
+        return;
+    }
+    
+    if (!dragData || dragData.memberId === undefined || dragData.dayIndex === undefined) return;
+    
+    const currentWeekKey = getWeekKey(currentWeekStart);
+    if (dragData.weekKey !== currentWeekKey) {
+        alert('Assignments can only be moved within the same week.');
+        return;
+    }
+    
+    if (dragData.memberId === targetMemberId && dragData.dayIndex === targetDayIndex) {
+        return;
+    }
+    
+    const sourceCellKey = `${dragData.memberId}-${currentWeekKey}-${dragData.dayIndex}`;
+    const targetCellKey = `${targetMemberId}-${currentWeekKey}-${targetDayIndex}`;
+    
+    if (!assignments[sourceCellKey] || !assignments[sourceCellKey][dragData.assignmentIndex]) return;
+    
+    const assignment = assignments[sourceCellKey][dragData.assignmentIndex];
+    const targetMember = teamMembers.find(m => m.id === targetMemberId);
+    
+    if (!targetMember) return;
+    
+    const dailyProjectHours = calculateDailyProjectHours(targetMember);
+    const currentTotal = getTotalAssignedHours(assignments[targetCellKey] || []);
+    const newTotal = currentTotal + assignment.hours;
+    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+    
+    if (newTotal > dailyProjectHours) {
+        const canProceed = confirm(
+            `Warning: Moving this assignment will result in ${newTotal}h assigned to ` +
+            `${targetMember.name} on ${days[targetDayIndex]}, which exceeds the available ` +
+            `${dailyProjectHours}h.\n\nDo you want to proceed anyway?`
+        );
+        if (!canProceed) {
+            return;
+        }
+    }
+    
+    assignments[sourceCellKey].splice(dragData.assignmentIndex, 1);
+    if (assignments[sourceCellKey].length === 0) {
+        delete assignments[sourceCellKey];
+    }
+    
+    if (!assignments[targetCellKey]) {
+        assignments[targetCellKey] = [];
+    }
+    assignments[targetCellKey].push({
+        projectId: assignment.projectId,
+        hours: assignment.hours
+    });
+    
+    saveData();
+    renderPlannerGrid();
 }
 
 // Move assignment to a different member/day

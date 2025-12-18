@@ -267,6 +267,11 @@ header h1 {
     background-color: #f0f0f0;
 }
 
+.calendar-cell.drag-over {
+    background-color: #eef2ff;
+    outline: 2px dashed #667eea;
+}
+
 .assignment {
     padding: 8px;
     border-radius: 4px;
@@ -274,6 +279,7 @@ header h1 {
     color: white;
     font-size: 0.85rem;
     text-align: left;
+    cursor: grab;
 }
 
 .assignment-name {
