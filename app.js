@@ -270,14 +270,14 @@ function renderPlannerGrid() {
             const totalAssigned = getTotalAssignedHours(cellAssignments);
             const isOverAllocated = totalAssigned > dailyProjectHours;
             
-            html += `<td class="calendar-cell ${isOverAllocated ? 'over-allocated' : ''}" onclick="openAssignmentModal('${member.id}', ${dayIndex})">`;
+            html += `<td class="calendar-cell ${isOverAllocated ? 'over-allocated' : ''}" onclick="openAssignmentModal('${member.id}', ${dayIndex})" ondragover="handleCellDragOver(event, '${member.id}', ${dayIndex})" ondragleave="handleCellDragLeave(event)" ondrop="handleAssignmentDrop(event, '${member.id}', ${dayIndex})">`;
             
             if (cellAssignments.length > 0) {
-                cellAssignments.forEach(assignment => {
+                cellAssignments.forEach((assignment, index) => {
                     const project = projects.find(p => p.id === assignment.projectId);
                     if (project) {
                         html += `
-                            <div class="assignment" style="background-color: ${project.color}">
+                            <div class="assignment" draggable="true" ondragstart="handleAssignmentDragStart(event, '${member.id}', ${dayIndex}, ${index})" ondragend="handleAssignmentDragEnd(event)" style="background-color: ${project.color}">
                                 <div class="assignment-name">${project.name}</div>
                                 <div class="assignment-hours">${assignment.hours}h</div>
                             </div>
@@ -782,6 +782,105 @@ function removeAssignment(memberId, dayIndex, assignmentIndex) {
         // Refresh the modal to show the updated list
         openAssignmentModal(memberId, dayIndex);
     }
+}
+
+// Drag and drop handlers
+function handleAssignmentDragStart(event, memberId, dayIndex, assignmentIndex) {
+    const dragData = {
+        memberId,
+        dayIndex,
+        assignmentIndex,
+        weekKey: getWeekKey(currentWeekStart)
+    };
+    
+    event.dataTransfer.setData('text/plain', JSON.stringify(dragData));
+    event.dataTransfer.effectAllowed = 'move';
+    event.stopPropagation();
+}
+
+function handleAssignmentDragEnd() {
+    document.querySelectorAll('.calendar-cell.drag-over').forEach(cell => {
+        cell.classList.remove('drag-over');
+    });
+}
+
+function handleCellDragOver(event, memberId, dayIndex) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    event.currentTarget.classList.add('drag-over');
+}
+
+function handleCellDragLeave(event) {
+    event.currentTarget.classList.remove('drag-over');
+}
+
+function handleAssignmentDrop(event, targetMemberId, targetDayIndex) {
+    event.preventDefault();
+    event.currentTarget.classList.remove('drag-over');
+    
+    const dataText = event.dataTransfer.getData('text/plain');
+    if (!dataText) return;
+    
+    let dragData;
+    try {
+        dragData = JSON.parse(dataText);
+    } catch (e) {
+        return;
+    }
+    
+    if (!dragData || dragData.memberId === undefined || dragData.dayIndex === undefined) return;
+    
+    const currentWeekKey = getWeekKey(currentWeekStart);
+    if (dragData.weekKey !== currentWeekKey) {
+        alert('Assignments can only be moved within the same week.');
+        return;
+    }
+    
+    if (dragData.memberId === targetMemberId && dragData.dayIndex === targetDayIndex) {
+        return;
+    }
+    
+    const sourceCellKey = `${dragData.memberId}-${currentWeekKey}-${dragData.dayIndex}`;
+    const targetCellKey = `${targetMemberId}-${currentWeekKey}-${targetDayIndex}`;
+    
+    if (!assignments[sourceCellKey] || !assignments[sourceCellKey][dragData.assignmentIndex]) return;
+    
+    const assignment = assignments[sourceCellKey][dragData.assignmentIndex];
+    const targetMember = teamMembers.find(m => m.id === targetMemberId);
+    
+    if (!targetMember) return;
+    
+    const dailyProjectHours = calculateDailyProjectHours(targetMember);
+    const currentTotal = getTotalAssignedHours(assignments[targetCellKey] || []);
+    const newTotal = currentTotal + assignment.hours;
+    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+    
+    if (newTotal > dailyProjectHours) {
+        const canProceed = confirm(
+            `Warning: Moving this assignment will result in ${newTotal}h assigned to ` +
+            `${targetMember.name} on ${days[targetDayIndex]}, which exceeds the available ` +
+            `${dailyProjectHours}h.\n\nDo you want to proceed anyway?`
+        );
+        if (!canProceed) {
+            return;
+        }
+    }
+    
+    assignments[sourceCellKey].splice(dragData.assignmentIndex, 1);
+    if (assignments[sourceCellKey].length === 0) {
+        delete assignments[sourceCellKey];
+    }
+    
+    if (!assignments[targetCellKey]) {
+        assignments[targetCellKey] = [];
+    }
+    assignments[targetCellKey].push({
+        projectId: assignment.projectId,
+        hours: assignment.hours
+    });
+    
+    saveData();
+    renderPlannerGrid();
 }
 
 // Move assignment to a different member/day
